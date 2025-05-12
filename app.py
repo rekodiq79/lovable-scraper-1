@@ -2,10 +2,6 @@ from flask import Flask, render_template, request, jsonify, send_file
 import os
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import json
 from urllib.parse import urljoin
@@ -13,24 +9,19 @@ import io
 
 app = Flask(__name__)
 
-def setup_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.binary_location = os.getenv('CHROME_BIN', '/usr/bin/google-chrome')
-    service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=chrome_options)
-
 def scrape_loveable(url):
-    driver = setup_driver()
     try:
-        driver.get(url)
-        time.sleep(2)  # Wait for dynamic content to load
+        # Add headers to mimic a browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         
-        # Get the page source after JavaScript execution
-        page_source = driver.page_source
-        soup = BeautifulSoup(page_source, 'html.parser')
+        # Get the page content
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        # Parse the HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
         
         # Extract code blocks
         code_blocks = []
@@ -54,8 +45,9 @@ def scrape_loveable(url):
             'code_blocks': code_blocks,
             'file_links': file_links
         }
-    finally:
-        driver.quit()
+    except Exception as e:
+        print(f"Error scraping: {str(e)}")
+        raise
 
 @app.route('/')
 def index():
@@ -82,8 +74,12 @@ def download():
         return jsonify({'error': 'Missing URL or filename'}), 400
     
     try:
-        response = requests.get(url)
-        # In Vercel, we'll return the file content instead of saving to desktop
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
         return send_file(
             io.BytesIO(response.content),
             mimetype='application/octet-stream',
