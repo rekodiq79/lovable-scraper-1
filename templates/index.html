@@ -76,6 +76,21 @@
             const loading = document.querySelector('.loading');
             const resultContainer = document.querySelector('.result-container');
             
+            // Validate form data
+            const url = form.url.value.trim();
+            const email = form.email.value.trim();
+            const password = form.password.value;
+            
+            if (!url) {
+                alert('Please enter a project URL');
+                return;
+            }
+            
+            if (!email || !password) {
+                alert('Please enter both email and password');
+                return;
+            }
+            
             // Show loading
             loading.style.display = 'block';
             resultContainer.style.display = 'none';
@@ -84,12 +99,13 @@
                 const response = await fetch('/analyze', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
                     body: JSON.stringify({
-                        url: form.url.value,
-                        email: form.email.value,
-                        password: form.password.value
+                        url: url,
+                        email: email,
+                        password: password
                     })
                 });
                 
@@ -98,30 +114,42 @@
                 if (response.ok) {
                     // Display code blocks
                     const codeBlocksList = document.getElementById('codeBlocksList');
-                    codeBlocksList.innerHTML = data.code_blocks.map((code, index) => `
-                        <div class="card mb-3">
-                            <div class="card-header">Code Block ${index + 1}</div>
-                            <div class="card-body">
-                                <pre class="mb-0"><code>${code}</code></pre>
+                    if (data.code_blocks && data.code_blocks.length > 0) {
+                        codeBlocksList.innerHTML = data.code_blocks.map((code, index) => `
+                            <div class="card mb-3">
+                                <div class="card-header">Code Block ${index + 1}</div>
+                                <div class="card-body">
+                                    <pre class="mb-0"><code>${code}</code></pre>
+                                </div>
                             </div>
-                        </div>
-                    `).join('');
+                        `).join('');
+                    } else {
+                        codeBlocksList.innerHTML = '<p>No code blocks found</p>';
+                    }
                     
                     // Display file links
                     const fileLinksList = document.getElementById('fileLinksList');
-                    fileLinksList.innerHTML = data.file_links.map(link => `
-                        <div class="card mb-2">
-                            <div class="card-body">
-                                <a href="${link.url}" target="_blank" class="btn btn-sm btn-primary">Download ${link.filename}</a>
+                    if (data.file_links && data.file_links.length > 0) {
+                        fileLinksList.innerHTML = data.file_links.map(link => `
+                            <div class="card mb-2">
+                                <div class="card-body">
+                                    <a href="${link.url}" target="_blank" class="btn btn-sm btn-primary">Download ${link.filename}</a>
+                                </div>
                             </div>
-                        </div>
-                    `).join('');
+                        `).join('');
+                    } else {
+                        fileLinksList.innerHTML = '<p>No file links found</p>';
+                    }
                     
                     resultContainer.style.display = 'block';
                 } else {
-                    alert('Error: ' + data.error);
+                    // Show detailed error message
+                    const errorMessage = data.error || 'An error occurred';
+                    const errorDetails = data.details ? `\nDetails: ${data.details}` : '';
+                    alert(`Error: ${errorMessage}${errorDetails}`);
                 }
             } catch (error) {
+                console.error('Error:', error);
                 alert('Error: ' + error.message);
             } finally {
                 loading.style.display = 'none';

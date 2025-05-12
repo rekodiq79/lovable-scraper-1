@@ -160,16 +160,43 @@ def index():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-        if not request.is_json:
-            logger.error("Request is not JSON")
-            return jsonify({'error': 'Request must be JSON'}), 400
-            
-        data = request.get_json()
-        logger.info(f"Received request data: {data}")
+        # Log the raw request data
+        logger.info(f"Request Content-Type: {request.content_type}")
+        logger.info(f"Request Headers: {dict(request.headers)}")
         
+        if not request.is_json:
+            logger.error(f"Request is not JSON. Content-Type: {request.content_type}")
+            return jsonify({
+                'error': 'Request must be JSON',
+                'content_type': request.content_type
+            }), 400
+            
+        # Log the raw request data
+        raw_data = request.get_data()
+        logger.info(f"Raw request data: {raw_data.decode('utf-8')}")
+        
+        try:
+            data = request.get_json()
+        except Exception as e:
+            logger.error(f"Failed to parse JSON: {str(e)}")
+            return jsonify({
+                'error': 'Invalid JSON format',
+                'details': str(e)
+            }), 400
+            
+        logger.info(f"Parsed request data: {data}")
+        
+        # Validate required fields
+        if not data:
+            logger.error("Empty request data")
+            return jsonify({'error': 'No data provided'}), 400
+            
         url = data.get('url')
         email = data.get('email')
         password = data.get('password')
+        
+        # Log the extracted values
+        logger.info(f"Extracted values - URL: {url}, Email: {email}, Password: {'*' * len(password) if password else None}")
         
         if not url:
             logger.error("No URL provided in request")
@@ -178,6 +205,14 @@ def analyze():
         if not is_valid_url(url):
             logger.error(f"Invalid URL format: {url}")
             return jsonify({'error': 'Invalid URL format'}), 400
+        
+        # Validate email and password if provided
+        if email and not password:
+            logger.error("Email provided but no password")
+            return jsonify({'error': 'Password is required when email is provided'}), 400
+        if password and not email:
+            logger.error("Password provided but no email")
+            return jsonify({'error': 'Email is required when password is provided'}), 400
         
         # Log authentication attempt
         if email and password:
