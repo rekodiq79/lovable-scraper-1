@@ -7,12 +7,135 @@ import json
 from urllib.parse import urljoin, urlparse
 import io
 import logging
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+import zipfile
+import uuid
+import tempfile
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+def setup_driver():
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-notifications")
+        chrome_options.add_argument("--disable-popup-blocking")
+        
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        logger.info("Chrome WebDriver initialized successfully")
+        return driver
+    except Exception as e:
+        logger.error(f"Failed to initialize Chrome WebDriver: {str(e)}")
+        raise
+
+def login_to_loveable(driver, email, password):
+    try:
+        logger.info("Attempting to log in to lovable.dev")
+        driver.get("https://lovable.dev/login")
+        
+        # Wait for email input
+        email_input = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.NAME, "email"))
+        )
+        email_input.send_keys(email)
+        
+        # Find and click password input
+        password_input = driver.find_element(By.NAME, "password")
+        password_input.send_keys(password)
+        
+        # Find and click login button
+        login_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Sign in')]")
+        login_button.click()
+        
+        # Wait for login to complete
+        WebDriverWait(driver, 10).until(
+            EC.url_changes("https://lovable.dev/login")
+        )
+        
+        logger.info("Successfully logged in to lovable.dev")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to log in: {str(e)}")
+        return False
+
+def scrape_loveable(url, email=None, password=None):
+    if not is_valid_url(url):
+        raise ValueError("Invalid URL format")
+    
+    driver = None
+    try:
+        logger.info(f"Starting to scrape URL: {url}")
+        driver = setup_driver()
+        
+        # Login if credentials are provided
+        if email and password:
+            if not login_to_loveable(driver, email, password):
+                raise ValueError("Failed to authenticate with lovable.dev")
+        
+        # Navigate to the project URL
+        driver.get(url)
+        
+        # Wait for the content to load
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "pre"))
+        )
+        
+        # Get all code blocks
+        code_blocks = []
+        pre_elements = driver.find_elements(By.TAG_NAME, "pre")
+        for pre in pre_elements:
+            code = pre.text
+            if code.strip():
+                code_blocks.append(code)
+        
+        # Get all file links
+        file_links = []
+        a_elements = driver.find_elements(By.TAG_NAME, "a")
+        for a in a_elements:
+            href = a.get_attribute('href')
+            if href and (href.endswith('.js') or href.endswith('.css') or href.endswith('.html')):
+                file_links.append({
+                    'url': href,
+                    'filename': href.split('/')[-1]
+                })
+        
+        if not code_blocks and not file_links:
+            raise ValueError("No code blocks or file links found on the page")
+        
+        logger.info(f"Successfully scraped {len(code_blocks)} code blocks and {len(file_links)} file links")
+        return {
+            'code_blocks': code_blocks,
+            'file_links': file_links
+        }
+    except Exception as e:
+        logger.error(f"Error scraping: {str(e)}")
+        raise ValueError(f"Failed to scrape the page: {str(e)}")
+    finally:
+        if driver:
+            try:
+                driver.quit()
+                logger.info("Chrome WebDriver closed successfully")
+            except Exception as e:
+                logger.error(f"Error closing Chrome WebDriver: {str(e)}")
 
 def is_valid_url(url):
     try:
@@ -20,80 +143,6 @@ def is_valid_url(url):
         return all([result.scheme, result.netloc])
     except Exception:
         return False
-
-def scrape_loveable(url):
-    if not is_valid_url(url):
-        raise ValueError("Invalid URL format")
-        
-    try:
-        # Add headers to mimic a browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
-        }
-        
-        # Get the page content with timeout
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-        except requests.exceptions.Timeout:
-            logger.error(f"Timeout while fetching URL: {url}")
-            raise ValueError("Request timed out. Please try again.")
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error while fetching URL: {url}, status code: {e.response.status_code}")
-            raise ValueError(f"Failed to fetch URL. Status code: {e.response.status_code}")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error while fetching URL: {url}, error: {str(e)}")
-            raise ValueError(f"Failed to fetch URL: {str(e)}")
-        
-        # Parse the HTML
-        try:
-            soup = BeautifulSoup(response.text, 'html.parser')
-        except Exception as e:
-            logger.error(f"Error parsing HTML for URL: {url}, error: {str(e)}")
-            raise ValueError("Failed to parse webpage content")
-        
-        # Extract code blocks
-        code_blocks = []
-        try:
-            for pre in soup.find_all('pre'):
-                code = pre.get_text()
-                if code.strip():
-                    code_blocks.append(code)
-        except Exception as e:
-            logger.error(f"Error extracting code blocks: {str(e)}")
-            # Continue even if code block extraction fails
-        
-        # Extract file links
-        file_links = []
-        try:
-            for a in soup.find_all('a'):
-                href = a.get('href')
-                if href and (href.endswith('.js') or href.endswith('.css') or href.endswith('.html')):
-                    full_url = urljoin(url, href)
-                    file_links.append({
-                        'url': full_url,
-                        'filename': href.split('/')[-1]
-                    })
-        except Exception as e:
-            logger.error(f"Error extracting file links: {str(e)}")
-            # Continue even if file link extraction fails
-        
-        if not code_blocks and not file_links:
-            raise ValueError("No code blocks or file links found on the page")
-            
-        return {
-            'code_blocks': code_blocks,
-            'file_links': file_links
-        }
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error while scraping: {str(e)}")
-        raise ValueError(f"An unexpected error occurred: {str(e)}")
 
 @app.route('/')
 def index():
@@ -110,13 +159,16 @@ def analyze():
             return jsonify({'error': 'Request must be JSON'}), 400
             
         url = request.json.get('url')
+        email = request.json.get('email')
+        password = request.json.get('password')
+        
         if not url:
             return jsonify({'error': 'No URL provided'}), 400
             
         if not is_valid_url(url):
             return jsonify({'error': 'Invalid URL format'}), 400
         
-        results = scrape_loveable(url)
+        results = scrape_loveable(url, email, password)
         return jsonify(results)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -139,29 +191,52 @@ def download():
         if not is_valid_url(url):
             return jsonify({'error': 'Invalid URL format'}), 400
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
-        }
+        logger.info(f"Starting download for URL: {url}, filename: {filename}")
         
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-        except requests.exceptions.Timeout:
-            return jsonify({'error': 'Download request timed out'}), 408
-        except requests.exceptions.HTTPError as e:
-            return jsonify({'error': f'Failed to download file. Status code: {e.response.status_code}'}), 500
-        except requests.exceptions.RequestException as e:
-            return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
-        
-        return send_file(
-            io.BytesIO(response.content),
-            mimetype='application/octet-stream',
-            as_attachment=True,
-            download_name=filename
-        )
+        # Create a temporary directory for the files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Download the file
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+            }
+            
+            try:
+                response = requests.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+            except requests.exceptions.Timeout:
+                logger.error("Download request timed out")
+                return jsonify({'error': 'Download request timed out'}), 408
+            except requests.exceptions.HTTPError as e:
+                logger.error(f"HTTP error during download: {str(e)}")
+                return jsonify({'error': f'Failed to download file. Status code: {e.response.status_code}'}), 500
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request error during download: {str(e)}")
+                return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
+            
+            # Save the file
+            file_path = os.path.join(temp_dir, filename)
+            with open(file_path, 'wb') as f:
+                f.write(response.content)
+            
+            # Create a zip file
+            zip_path = os.path.join(temp_dir, f"{filename}.zip")
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                zipf.write(file_path, arcname=filename)
+            
+            # Read the zip file
+            with open(zip_path, 'rb') as f:
+                zip_content = f.read()
+            
+            logger.info(f"Successfully created zip file for {filename}")
+            return send_file(
+                io.BytesIO(zip_content),
+                mimetype='application/zip',
+                as_attachment=True,
+                download_name=f"{filename}.zip"
+            )
     except Exception as e:
         logger.error(f"Error in download endpoint: {str(e)}")
         return jsonify({'error': 'An unexpected error occurred'}), 500
