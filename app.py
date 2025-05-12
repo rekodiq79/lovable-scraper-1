@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
 import os
 import requests
 from bs4 import BeautifulSoup
@@ -26,6 +26,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'static'),
+                             'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 def setup_driver():
     try:
@@ -156,24 +161,37 @@ def index():
 def analyze():
     try:
         if not request.is_json:
+            logger.error("Request is not JSON")
             return jsonify({'error': 'Request must be JSON'}), 400
             
-        url = request.json.get('url')
-        email = request.json.get('email')
-        password = request.json.get('password')
+        data = request.get_json()
+        logger.info(f"Received request data: {data}")
+        
+        url = data.get('url')
+        email = data.get('email')
+        password = data.get('password')
         
         if not url:
+            logger.error("No URL provided in request")
             return jsonify({'error': 'No URL provided'}), 400
             
         if not is_valid_url(url):
+            logger.error(f"Invalid URL format: {url}")
             return jsonify({'error': 'Invalid URL format'}), 400
+        
+        # Log authentication attempt
+        if email and password:
+            logger.info(f"Attempting to authenticate with email: {email}")
+        else:
+            logger.info("No authentication credentials provided")
         
         results = scrape_loveable(url, email, password)
         return jsonify(results)
     except ValueError as e:
+        logger.error(f"ValueError in analyze endpoint: {str(e)}")
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        logger.error(f"Error in analyze endpoint: {str(e)}")
+        logger.error(f"Unexpected error in analyze endpoint: {str(e)}")
         return jsonify({'error': 'An unexpected error occurred'}), 500
 
 @app.route('/download', methods=['POST'])
